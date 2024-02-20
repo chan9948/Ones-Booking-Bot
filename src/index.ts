@@ -10,8 +10,8 @@ function main() {
     bookForWeekday: [Day.Monday, Day.Tuesday, Day.Wednesday],
 
     //your email and password
-    username: "chak.chan.jz@fujifilm.com",
-    password: "Ctc87813076",
+    username: "email",
+    password: "password",
 
     //new Date() -> book from today, new Date('2021-09-01') -> book from 2021-09-01
     bookFromDate: new Date(),

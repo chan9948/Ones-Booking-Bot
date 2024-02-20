@@ -24,22 +24,6 @@ export enum Day {
   Saturday = 6,
 }
 
-// const DefaultOptions: BookingOptions = {
-//   floor: [Floor.Floor27, Floor.Floor26],
-//   amenity: [Amenity.doubleMonitor, Amenity.doubleMonitor],
-//   bookForWeekday: [Day.Monday, Day.Tuesday, Day.Wednesday],
-//   startHour: 9,
-//   endHour: 18,
-//   bookForDays: 31,
-//   bookFromDate: new Date(),
-//   username: "",
-//   password: "",
-//   logger: {
-//     log: console.log,
-//     error: console.error,
-//   },
-// };
-
 export interface BookingOptions {
   floor: Floor[];
   amenity: Amenity[];
