@@ -1,20 +1,36 @@
-import axios, { Axios } from "axios";
-import { error, log } from "console";
+import axios from "axios";
 import dayjs from "dayjs";
-import { escape } from "querystring";
-import R from "types-ramda";
-import { wrapper } from "axios-cookiejar-support";
-import { Cookie, CookieJar } from "tough-cookie";
+import { difference, max, reduce } from "ramda";
 
-const jar = new CookieJar();
+enum Floor {
+  Floor26 = 1,
+  Floor27 = 2,
+}
 
-// const client = wrapper(
-//   axios.create({
-//     baseURL: "https://fujifilm.bookings.one/api",
-//     withCredentials: true,
-//     jar,
-//   })
-// );
+enum Amenity {
+  singleMonitor = 8,
+  doubleMonitor = 9,
+  partitionPanel = 10,
+  heightAdjustable = 11,
+}
+
+enum Day {
+  Sunday = 0,
+  Monday = 1,
+  Tuesday = 2,
+  Wednesday = 3,
+  Thursday = 4,
+  Friday = 5,
+  Saturday = 6,
+}
+
+export const Preferences = {
+  floor: [Floor.Floor27, Floor.Floor26],
+  amenity: [Amenity.doubleMonitor, Amenity.doubleMonitor],
+  bookForWeekday: [Day.Monday, Day.Tuesday, Day.Wednesday],
+  startHour: 9,
+  endHour: 18,
+} as const;
 
 const client = axios.create({
   baseURL: "https://fujifilm.bookings.one/api",
@@ -41,55 +57,57 @@ client.interceptors.response.use(
   }
 );
 
-async function main(bookingDay: Date = dayjs().toDate()) {
+async function main(bookingDays: Date[]) {
   await login("chak.chan.jz@fujifilm.com", "Ctc87813076");
 
-  const from = dayjs(bookingDay).startOf("day").hour(9).toDate();
-  const to = dayjs(bookingDay).startOf("day").hour(18).toDate();
+  for (const bookingDay of bookingDays) {
+    try {
+      const from = dayjs(bookingDay)
+        .startOf("day")
+        .hour(Preferences.startHour)
+        .toDate();
+      const to = dayjs(bookingDay)
+        .startOf("day")
+        .hour(Preferences.endHour)
+        .toDate();
 
-  const availableDesks = await getAvailableDesks({
-    availableStart: from,
-    availableEnd: to,
-    floors: [Floor.Floor26, Floor.Floor27],
-    deskTypes: [DeskType.singleMonitor, DeskType.doubleMonitor],
-  });
+      const availableDesks = await getAvailableDesks({
+        availableStart: from,
+        availableEnd: to,
+      });
 
-  if (!availableDesks || availableDesks.length === 0)
-    throw new Error("No available desks");
+      if (!availableDesks || availableDesks.length === 0)
+        throw new Error("No available desks");
 
-  const desk = availableDesks[0];
+      const desk = availableDesks[0];
 
-  const bookingId = await bookDesk({
-    deskId: desk.id,
-    bookFrom: from,
-    bookTo: to,
-  });
+      const bookingId = await bookDesk({
+        deskId: desk.id,
+        bookFrom: from,
+        bookTo: to,
+      });
 
-  let isBooked = false;
+      let isBooked = false;
 
-  if (bookingId) {
-    isBooked = true;
-    console.log(
-      `Booking created with id: ${bookingId}, desk: ${desk.name[0].text}, from: ${from}, to: ${to}`
-    );
+      if (bookingId) {
+        isBooked = true;
+
+        console.log(
+          `Booking created with id: ${bookingId}, 
+           desk: ${desk.name[0].text}, 
+           from: ${from}, to: ${to}, 
+           floor: ${desk.floor.name[0].text},
+           with amenities: ${desk.amenities
+             .map((a) => a.name[0].text)
+             .join(", ")}`
+        );
+      }
+
+      if (!isBooked) throw new Error("Failed to book a desk");
+    } catch (error) {
+      console.error("failed to book desk on ", bookingDay);
+    }
   }
-
-  //   for (const desk of availableDesks) {
-  //     const bookingId = await bookDesk({
-  //       deskId: desk.id,
-  //       bookFrom: from,
-  //       bookTo: to,
-  //     });
-  //     if (!!bookingId) {
-  //       console.log(
-  //         `Booking created with id: ${bookingId}, desk: ${desk.name[0].text}, from: ${from}, to: ${to}`
-  //       );
-  //       isBooked = true;
-  //       break;
-  //     }
-  //   }
-
-  if (!isBooked) throw new Error("Failed to book a desk");
 }
 
 async function login(username: string, password: string) {
@@ -119,14 +137,14 @@ async function login(username: string, password: string) {
 
 async function getAvailableDesks({
   floors,
-  deskTypes,
+  amenities,
   availableStart,
   availableEnd,
 }: {
   availableStart: Date;
   availableEnd: Date;
-  floors: Floor[];
-  deskTypes: DeskType[];
+  floors?: Floor[];
+  amenities?: Amenity[];
 }) {
   try {
     const response = await client.post<
@@ -142,7 +160,7 @@ async function getAvailableDesks({
             categories: [],
             // categories: ["workStation"],
             capacityRanges: [],
-            amenityIds: deskTypes,
+            amenityIds: amenities,
             availableStart: dayjs(availableStart).format(DateFormat),
             availableEnd: dayjs(availableEnd).format(DateFormat),
           },
@@ -169,10 +187,39 @@ async function getAvailableDesks({
     console.log(`found ${availableDesks.length} available desks`);
 
     const sorted = availableDesks.sort((a, b) => {
-      if (a.floor.id !== b.floor.id) return a.floor.id - b.floor.id;
+      if (a.floor.id !== b.floor.id) {
+        const aIndex = Preferences.floor.indexOf(a.floor.id);
+        const bIndex = Preferences.floor.indexOf(b.floor.id);
 
-      if (a.amenities[0].id !== b.amenities[0].id)
-        return a.amenities[0].id - b.amenities[0].id;
+        if (aIndex === bIndex) return 0;
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+
+        return aIndex - bIndex;
+      }
+
+      const diffAmenities = difference(
+        a.amenities.map((a) => a.id),
+        b.amenities.map((b) => b.id)
+      );
+      if (diffAmenities.length > 0) {
+        const aMaxIndex = reduce<number, number>(
+          max,
+          -1,
+          a.amenities.map((a) => Preferences.amenity.indexOf(a.id))
+        );
+        const bMaxIndex = reduce<number, number>(
+          max,
+          -1,
+          b.amenities.map((b) => Preferences.amenity.indexOf(b.id))
+        );
+
+        if (aMaxIndex === bMaxIndex) return 0;
+        if (aMaxIndex === -1) return 1;
+        if (bMaxIndex === -1) return -1;
+
+        return aMaxIndex - bMaxIndex;
+      }
 
       return 0;
     });
@@ -262,16 +309,6 @@ type LoginResponse = {
   };
 };
 
-enum Floor {
-  Floor26 = 1,
-  Floor27 = 2,
-}
-
-enum DeskType {
-  singleMonitor = 8,
-  doubleMonitor = 9,
-}
-
 type BookableResourcesDto = {
   bookableResource: { bookableResources: Resource[] };
 };
@@ -311,8 +348,30 @@ type BaseResponse<K extends string, T = {}> = [
 
 const DateFormat = "YYYY-MM-DDTHH:mm:ssZ";
 
+function getDates(startDate: Date = new Date(), numberOfDays: number = 31) {
+  const endDate = dayjs(startDate)
+    .startOf("date")
+    .add(numberOfDays, "day")
+    .toDate();
+
+  const dates = [startDate];
+
+  while (dates.length <= numberOfDays) {
+    const nextDate = dayjs(dates[dates.length - 1])
+      .add(1, "day")
+      .toDate();
+    dates.push(nextDate);
+  }
+
+  return dates;
+}
+
 try {
-  main(new Date("2024-02-20"));
+  const datesToBook = getDates().filter((d) => {
+    const index = Preferences.bookForWeekday.indexOf(dayjs(d).day());
+    return index !== -1;
+  });
+  main(datesToBook);
 } catch (error) {
   console.error(JSON.stringify(error));
 }
